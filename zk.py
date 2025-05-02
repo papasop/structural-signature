@@ -1,53 +1,58 @@
-import time
 import math
-import hashlib
+import random
 
-# 模拟结构函数 φ(x)
-def phi(x, A=2.0, t=3.0, theta=0.5):
-    return A * math.cos(t * math.log(x + 1) + theta)
+# === 结构函数定义 ===
+def generate_phi_params(seed=0):
+    random.seed(seed)
+    return [(random.uniform(0.5, 2.0),
+             random.uniform(1.0, 5.0),
+             random.uniform(0, 2 * math.pi)) for _ in range(3)]
 
-# 模拟 ZKP 生成（100~150ms）
-def generate_zkp(phi_x, tau, epsilon):
-    time.sleep(0.12)  # 模拟生成耗时
-    return f"zkp_proof_for_{phi_x:.4f}"
+def phi(x, params):
+    return sum(A * math.cos(t * math.log(x + 1) + theta) for A, t, theta in params)
 
-# 模拟 ZKP 验证（5~10ms，非必须测）
-def verify_zkp(proof):
-    time.sleep(0.007)
-    return True
+def residual(phi_x, tau):
+    return abs(phi_x - tau)
 
-# 不带 ZKP 的结构签名
-def structure_signature_without_zkp(x, tau, epsilon):
-    start = time.time()
-    phi_x = phi(x)
-    delta = abs(phi_x - tau)
-    signature = hashlib.sha256(f"{x}|{phi_x:.6f}|{delta:.6f}".encode()).hexdigest()
-    return signature, time.time() - start
+# === 模拟结构 ZKP ===
+def zkp_prove(phi_x, tau, epsilon):
+    delta = residual(phi_x, tau)
+    return {
+        "comm": f"commitment(delta={round(delta, 4)})",
+        "phi_x": phi_x,
+        "delta": delta,
+        "epsilon": epsilon,
+        "zkp_valid": delta < epsilon
+    }
 
-# 带 ZKP 的结构签名
-def structure_signature_with_zkp(x, tau, epsilon):
-    start = time.time()
-    phi_x = phi(x)
-    delta = abs(phi_x - tau)
-    proof = generate_zkp(phi_x, tau, epsilon)
-    signature = hashlib.sha256(f"{x}|{phi_x:.6f}|{delta:.6f}".encode()).hexdigest()
-    return signature, proof, time.time() - start
+def zkp_verify(proof):
+    return proof["zkp_valid"] and proof["delta"] < proof["epsilon"]
 
-# 运行测试
+# === 签名查找器 ===
+def find_valid_structure_signature(x, epsilon, max_trials=1000):
+    for seed in range(max_trials):
+        params = generate_phi_params(seed)
+        phi_x = phi(x, params)
+        for offset in [-epsilon * 0.5, 0, epsilon * 0.5]:
+            tau = phi_x + offset
+            delta = residual(phi_x, tau)
+            proof = zkp_prove(phi_x, tau, epsilon)
+            if zkp_verify(proof):
+                return {
+                    "seed": seed,
+                    "x": x,
+                    "phi(x)": round(phi_x, 6),
+                    "tau": round(tau, 6),
+                    "epsilon": epsilon,
+                    "delta": round(delta, 6),
+                    "zkp_valid": True,
+                    "commitment": proof["comm"]
+                }
+    return {"zkp_valid": False, "message": "No valid structure signature found within trial limit."}
+
+# === 测试运行 ===
 if __name__ == "__main__":
-    x_val = 123456
-    tau = 1.5
-    epsilon = 0.05
-
-    print("Running benchmark over 100 signatures...\n")
-    zkp_total, no_zkp_total = 0, 0
-
-    for _ in range(100):
-        _, t1 = structure_signature_without_zkp(x_val, tau, epsilon)
-        _, _, t2 = structure_signature_with_zkp(x_val, tau, epsilon)
-        no_zkp_total += t1
-        zkp_total += t2
-
-    print(f"平均不带ZKP签名时间：{no_zkp_total / 100:.8f} 秒")
-    print(f"平均带ZKP签名时间：{zkp_total / 100:.3f} 秒")
-    print(f"合计总耗时（ZKP）：{zkp_total:.2f} 秒")
+    result = find_valid_structure_signature(x=42, epsilon=0.1)
+    print("=== Structure ZKP Test Result ===")
+    for k, v in result.items():
+        print(f"{k}: {v}")
